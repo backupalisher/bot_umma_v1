@@ -230,7 +230,6 @@ async def send_daily_prayer_schedule(context: CallbackContext):
     cutoff_date = now - datetime.timedelta(days=1)
     global sent_daily_schedules
 
-    # Очистка старых записей
     sent_daily_schedules = {
         k: v for k, v in sent_daily_schedules.items()
         if datetime.datetime.strptime(k.split('-')[0], '%Y-%m-%d') > cutoff_date
@@ -257,8 +256,7 @@ async def send_daily_prayer_schedule(context: CallbackContext):
             time_diff = fajr_minutes - current_minutes
 
             schedule_id = f"{today.strftime('%Y-%m-%d')}-{user['chat_id']}"
-            # Уведомление отправляется за 10 минут до Фаджр или чуть раньше
-            if 0 < time_diff <= 10 and schedule_id not in sent_daily_schedules:
+            if time_diff == 10 and schedule_id not in sent_daily_schedules:
                 schedule_text = "🕋 Расписание намазов на сегодня:\n" + "\n".join(
                     [f"• {name}: <b>{time}</b>" for name, time in schedule.items()]
                 )
@@ -268,9 +266,9 @@ async def send_daily_prayer_schedule(context: CallbackContext):
                     parse_mode='HTML'
                 )
                 sent_daily_schedules[schedule_id] = True
-                logger.info(f"Ежедневное расписание отправлено для {user['chat_id']} в {current_time}, Фаджр: {fajr_time}")
+                logger.info(f"Ежедневное расписание отправлено для {user['chat_id']} в {current_time}")
         except Exception as e:
-            logger.error(f"Ошибка при отправке расписания для {user['chat_id']}: {e}", exc_info=True)
+            logger.error(f"Ошибка при отправке расписания для {user['chat_id']}: {e}")
 
 
 # Отправка Аята дня в 8:00 утра
@@ -308,8 +306,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("📅 Расписание на сегодня")],
         [KeyboardButton("📖 Аят дня")],
-        [KeyboardButton("⚙️ Настройки")],
-        [KeyboardButton("ℹ️ Команды бота")]  # Новая кнопка
+        [KeyboardButton("⚙️ Настройки")]
     ]
     user = update.effective_user
     await update.message.reply_html(
@@ -322,19 +319,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/unsubscribe - ❌ Отписаться от уведомлений",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
-
-
-async def show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    commands_list = (
-        "ℹ️ *Список команд бота:*\n"
-        "/start - Начало работы с ботом\n"
-        "/set_city - 🏠 Выбрать город вручную\n"
-        "/status - ℹ️ Показать текущие настройки\n"
-        "/daily_quote - 📖 Аят дня\n"
-        "/subscribe - ✅ Подписаться на уведомления\n"
-        "/unsubscribe - ❌ Отписаться от уведомлений"
-    )
-    await update.message.reply_text(commands_list, parse_mode='Markdown')
 
 
 async def daily_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -578,7 +562,6 @@ def main():
         application.add_handler(CommandHandler("daily_quote", daily_quote))
         application.add_handler(CommandHandler("subscribe", subscribe))
         application.add_handler(CommandHandler("unsubscribe", unsubscribe))
-        application.add_handler(MessageHandler(filters.Text("ℹ️ Команды бота"), show_commands))
         application.add_handler(MessageHandler(filters.Text("📅 Расписание на сегодня"), daily_schedule))
         application.add_handler(MessageHandler(filters.Text("📖 Аят дня"), daily_quote))
         application.add_handler(MessageHandler(filters.Text("⚙️ Настройки"), settings))
