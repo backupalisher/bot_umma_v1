@@ -81,8 +81,7 @@ def init_db():
                              (chat_id INTEGER PRIMARY KEY,
                               city TEXT,
                               timezone TEXT,
-                              subscribed INTEGER DEFAULT 1,
-                              notification_offset INTEGER DEFAULT 10)''')  # Новая колонка
+                              subscribed INTEGER DEFAULT 1)''')
             conn.commit()
         logger.info("База данных успешно инициализирована")
     except Error as e:
@@ -94,61 +93,26 @@ def get_subscribed_users():
     try:
         with sqlite3.connect(DATABASE) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT chat_id, city, timezone, notification_offset FROM subscribers WHERE subscribed = 1")
-            users = [{'chat_id': row[0], 'city': row[1], 'tz': row[2], 'offset': row[3]} for row in cursor.fetchall()]
+            cursor.execute("SELECT chat_id, city, timezone FROM subscribers WHERE subscribed = 1")
+            users = [{'chat_id': row[0], 'city': row[1], 'tz': row[2]} for row in cursor.fetchall()]
             logger.info(f"Найдено {len(users)} подписанных пользователей")
             return users
     except Error as e:
         logger.error(f"Ошибка при получении подписчиков: {e}")
         return []
 
-def update_user(chat_id: int, city: str, timezone: str, notification_offset: int = 10):
+
+def update_user(chat_id: int, city: str, timezone: str):
     try:
         with sqlite3.connect(DATABASE) as conn:
             cursor = conn.cursor()
             cursor.execute('''INSERT OR REPLACE INTO subscribers 
-                             (chat_id, city, timezone, subscribed, notification_offset) 
-                             VALUES (?, ?, ?, 1, ?)''', (chat_id, city, timezone, notification_offset))
+                             (chat_id, city, timezone, subscribed) 
+                             VALUES (?, ?, ?, 1)''', (chat_id, city, timezone))
             conn.commit()
-        logger.info(f"Обновление данных о пользователе {chat_id}: город={city}, timezone={timezone}, offset={notification_offset}")
+        logger.info(f"Обновление данных о пользователе {chat_id}: город={city}, timezone={timezone}")
     except Error as e:
         logger.error(f"Ошибка при обновлении пользователя {chat_id}: {e}")
-
-
-async def set_notification_offset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    keyboard = [
-        [InlineKeyboardButton("5 минут", callback_data=f"offset_5")],
-        [InlineKeyboardButton("10 минут", callback_data=f"offset_10")],
-        [InlineKeyboardButton("15 минут", callback_data=f"offset_15")],
-    ]
-    await update.message.reply_text(
-        "Выберите, за сколько минут до намаза отправлять уведомления:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_offset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    chat_id = query.message.chat_id
-    offset = int(query.data.split('_')[1])  # Извлекаем число из callback_data (5, 10 или 15)
-
-    try:
-        with sqlite3.connect(DATABASE) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT city, timezone FROM subscribers WHERE chat_id = ?", (chat_id,))
-            result = cursor.fetchone()
-            if result:
-                city, timezone = result
-                update_user(chat_id, city, timezone, offset)
-                await query.edit_message_text(f"Уведомления будут отправляться за {offset} минут до намаза.")
-            else:
-                await query.edit_message_text("❌ Сначала установите город с помощью /set_city.")
-    except Error as e:
-        logger.error(f"Ошибка при установке offset для {chat_id}: {e}")
-        await query.edit_message_text("❌ Произошла ошибка")
-
-    await query.answer()
 
 
 def unsubscribe_user(chat_id: int):
@@ -266,6 +230,7 @@ async def send_daily_prayer_schedule(context: CallbackContext):
     cutoff_date = now - datetime.timedelta(days=1)
     global sent_daily_schedules
 
+    # Очистка старых записей
     sent_daily_schedules = {
         k: v for k, v in sent_daily_schedules.items()
         if datetime.datetime.strptime(k.split('-')[0], '%Y-%m-%d') > cutoff_date
@@ -275,7 +240,6 @@ async def send_daily_prayer_schedule(context: CallbackContext):
         try:
             city = user['city']
             tz = pytz.timezone(user['tz'])
-            offset = user['offset']
             now = datetime.datetime.now(tz)
             current_time = now.strftime("%H:%M")
             schedule = await parse_prayer_times(city, today)
@@ -293,7 +257,8 @@ async def send_daily_prayer_schedule(context: CallbackContext):
             time_diff = fajr_minutes - current_minutes
 
             schedule_id = f"{today.strftime('%Y-%m-%d')}-{user['chat_id']}"
-            if 0 < time_diff <= offset and schedule_id not in sent_daily_schedules:
+            # Уведомление отправляется за 10 минут до Фаджр или чуть раньше
+            if 0 < time_diff <= 10 and schedule_id not in sent_daily_schedules:
                 schedule_text = "🕋 Расписание намазов на сегодня:\n" + "\n".join(
                     [f"• {name}: <b>{time}</b>" for name, time in schedule.items()]
                 )
@@ -341,17 +306,35 @@ async def send_daily_quote(context: CallbackContext):
 # Обработчики Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("📅 Расписание на сегодня", callback_data="daily_schedule")],
-        [InlineKeyboardButton("📖 Аят дня", callback_data="daily_quote")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
-        [InlineKeyboardButton("ℹ️ Команды бота", callback_data="show_commands")],
+        [KeyboardButton("📅 Расписание на сегодня")],
+        [KeyboardButton("📖 Аят дня")],
+        [KeyboardButton("⚙️ Настройки")],
+        [KeyboardButton("ℹ️ Команды бота")]  # Новая кнопка
     ]
     user = update.effective_user
     await update.message.reply_html(
         f"Assalamu Alaikum, {user.mention_html()}! Я буду напоминать вам о времени намаза.\n"
-        "Выберите действие ниже:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "Сначала выберите город:\n"
+        "/set_city _- 🏠 Выбрать город вручную\n"
+        "/status - ℹ️ Показать текущие настройки\n"
+        "/daily_quote _- 📖 Аят дня\n"
+        "/subscribe - ✅ Подписаться на уведомления\n"
+        "/unsubscribe - ❌ Отписаться от уведомлений",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
+
+
+async def show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    commands_list = (
+        "ℹ️ *Список команд бота:*\n"
+        "/start - Начало работы с ботом\n"
+        "/set_city - 🏠 Выбрать город вручную\n"
+        "/status - ℹ️ Показать текущие настройки\n"
+        "/daily_quote - 📖 Аят дня\n"
+        "/subscribe - ✅ Подписаться на уведомления\n"
+        "/unsubscribe - ❌ Отписаться от уведомлений"
+    )
+    await update.message.reply_text(commands_list, parse_mode='Markdown')
 
 
 async def daily_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -391,14 +374,14 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with sqlite3.connect(DATABASE) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT city, timezone, subscribed, notification_offset FROM subscribers WHERE chat_id = ?", (chat_id,))
+            cursor.execute("SELECT city, timezone, subscribed FROM subscribers WHERE chat_id = ?", (chat_id,))
             result = cursor.fetchone()
         if result:
-            city, tz, subscribed, offset = result
+            city, tz, subscribed = result
             city_name = next((k for k, v in CITIES.items() if v == city), city)
             status_text = "✅ Подписан" if subscribed else "❌ Не подписан"
             await update.message.reply_text(
-                f"🏠 Город: {city_name}\n⏰ Часовой пояс: {tz}\n📩 Статус: {status_text}\n⏳ Уведомления: за {offset} минут"
+                f"🏠 Город: {city_name}\n⏰ Часовой пояс: {tz}\n📩 Статус: {status_text}"
             )
         else:
             await update.message.reply_text("❌ Настройки не найдены. Установите город с помощью /set_city")
@@ -525,33 +508,41 @@ async def check_prayer_times(context: CallbackContext):
     cutoff_date = now - datetime.timedelta(days=1)
     global sent_notifications
 
-    cleaned_notifications = {
-        k: v for k, v in sent_notifications.items()
-        if datetime.datetime.strptime(k.split('-')[0], '%Y-%m-%d') > cutoff_date
-    }
+    cleaned_notifications = {}
+    for k, v in sent_notifications.items():
+        try:
+            date_part = k.split('-')[0]
+            if len(date_part) == 10 and date_part[4] == '-' and date_part[7] == '-':
+                if datetime.datetime.strptime(date_part, '%Y-%m-%d') > cutoff_date:
+                    cleaned_notifications[k] = v
+            else:
+                logger.warning(f"Удален некорректный ключ уведомления: {k}")
+        except ValueError as e:
+            logger.error(f"Ошибка обработки ключа {k}: {e}")
     sent_notifications = cleaned_notifications
 
     for user in users:
         try:
             city = user['city']
             tz = pytz.timezone(user['tz'])
-            offset = user['offset']
             now = datetime.datetime.now(tz)
             today = now.date()
             current_time = now.strftime("%H:%M")
+            logger.info(f"Проверка для {user['chat_id']}: текущее время {current_time}")
 
             schedule = await parse_prayer_times(city, today)
             if not schedule:
                 logger.warning(f"Расписание для {city} пустое")
                 continue
 
+            logger.debug(f"Расписание для {city}: {schedule}")
             for prayer, time in schedule.items():
                 prayer_minutes = sum(x * int(t) for x, t in zip([60, 1], time.split(":")))
                 current_minutes = sum(x * int(t) for x, t in zip([60, 1], current_time.split(":")))
                 time_diff = prayer_minutes - current_minutes
 
                 notification_id = f"{today.strftime('%Y-%m-%d')}-{prayer}-{user['chat_id']}"
-                if 0 < time_diff <= offset and notification_id not in sent_notifications:
+                if time_diff == 0 and notification_id not in sent_notifications:
                     await context.bot.send_message(
                         chat_id=user['chat_id'],
                         text=f"🕌 Время <u>{prayer}</u> намаза: <b>{time}</b>",
@@ -571,116 +562,6 @@ async def post_init(application: Application):
     logger.info("Данные успешно загружены при старте")
 
 
-async def handle_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    chat_id = query.message.chat_id
-    data = query.data
-
-    if data == "daily_schedule":
-        try:
-            with sqlite3.connect(DATABASE) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT city, timezone FROM subscribers WHERE chat_id = ?", (chat_id,))
-                result = cursor.fetchone()
-            if not result:
-                await query.edit_message_text("❌ Сначала установите город с помощью /set_city")
-                return
-            city, tz = result
-            today = datetime.datetime.now(pytz.timezone(tz)).date()
-            schedule = await parse_prayer_times(city, today)
-            if schedule:
-                text = "🕋 Расписание на сегодня:\n" + "\n".join(
-                    [f"• <b>{time}</b> - {name}" for name, time in schedule.items()])
-                await query.edit_message_text(text, parse_mode='HTML')
-            else:
-                await query.edit_message_text("❌ Расписание временно недоступно")
-        except Exception as e:
-            logger.error(f"Ошибка в daily_schedule для {chat_id}: {e}")
-            await query.edit_message_text("❌ Произошла ошибка")
-
-    elif data == "daily_quote":
-        quote = await get_daily_quote('ayat')
-        if quote:
-            await query.edit_message_text(f"📖 Аят дня:\n{quote['text']}", parse_mode='HTML')
-        else:
-            await query.edit_message_text("❌ Аят дня временно недоступен")
-
-    elif data == "settings":
-        keyboard = [
-            [InlineKeyboardButton("🏠 Изменить город", callback_data="change_city")],
-            [InlineKeyboardButton("⏳ Установить время уведомлений", callback_data="set_offset")],
-            [InlineKeyboardButton("ℹ️ Текущие настройки", callback_data="show_settings")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")],
-        ]
-        await query.edit_message_text(
-            "⚙️ Настройки\nВыберите действие:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-
-    elif data == "show_commands":
-        commands_list = (
-            "ℹ️ *Список команд бота:*\n"
-            "/start - Начало работы с ботом\n"
-            "/set_city - 🏠 Выбрать город вручную\n"
-            "/set_offset - ⏳ Установить время уведомлений\n"
-            "/status - ℹ️ Показать текущие настройки\n"
-            "/daily_quote - 📖 Аят дня\n"
-            "/subscribe - ✅ Подписаться на уведомления\n"
-            "/unsubscribe - ❌ Отписаться от уведомлений"
-        )
-        await query.edit_message_text(commands_list, parse_mode='Markdown')
-
-    elif data == "change_city":
-        keyboard = [[InlineKeyboardButton(city, callback_data=f"set_city_{city}")] for city in CITIES]
-        keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="settings")])
-        await query.edit_message_text("Выберите город:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data == "set_offset":
-        keyboard = [
-            [InlineKeyboardButton("5 минут", callback_data="offset_5")],
-            [InlineKeyboardButton("10 минут", callback_data="offset_10")],
-            [InlineKeyboardButton("15 минут", callback_data="offset_15")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="settings")],
-        ]
-        await query.edit_message_text(
-            "Выберите, за сколько минут до намаза отправлять уведомления:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    elif data == "show_settings":
-        try:
-            with sqlite3.connect(DATABASE) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT city, timezone, subscribed, notification_offset FROM subscribers WHERE chat_id = ?", (chat_id,))
-                result = cursor.fetchone()
-            if result:
-                city, tz, subscribed, offset = result
-                city_name = next((k for k, v in CITIES.items() if v == city), city)
-                status_text = "✅ Подписан" if subscribed else "❌ Не подписан"
-                settings_text = f"🏠 Город: {city_name}\n⏰ Часовой пояс: {tz}\n📩 Статус: {status_text}\n⏳ Уведомления: за {offset} минут"
-            else:
-                settings_text = "❌ Настройки не найдены. Установите город с помощью /set_city"
-            await query.edit_message_text(settings_text)
-        except Error as e:
-            logger.error(f"Ошибка при показе настроек для {chat_id}: {e}")
-            await query.edit_message_text("❌ Произошла ошибка")
-
-    elif data == "back_to_main":
-        keyboard = [
-            [InlineKeyboardButton("📅 Расписание на сегодня", callback_data="daily_schedule")],
-            [InlineKeyboardButton("📖 Аят дня", callback_data="daily_quote")],
-            [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
-            [InlineKeyboardButton("ℹ️ Команды бота", callback_data="show_commands")],
-        ]
-        await query.edit_message_text(
-            f"Assalamu Alaikum! Выберите действие ниже:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-    await query.answer()
-
-
 def main():
     init_db()
     try:
@@ -693,22 +574,24 @@ def main():
 
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("set_city", get_city))
-        application.add_handler(CommandHandler("set_offset", set_notification_offset))  # Новая команда
         application.add_handler(CommandHandler("status", status))
         application.add_handler(CommandHandler("daily_quote", daily_quote))
         application.add_handler(CommandHandler("subscribe", subscribe))
         application.add_handler(CommandHandler("unsubscribe", unsubscribe))
+        application.add_handler(MessageHandler(filters.Text("ℹ️ Команды бота"), show_commands))
+        application.add_handler(MessageHandler(filters.Text("📅 Расписание на сегодня"), daily_schedule))
+        application.add_handler(MessageHandler(filters.Text("📖 Аят дня"), daily_quote))
+        application.add_handler(MessageHandler(filters.Text("⚙️ Настройки"), settings))
 
         application.add_handler(CallbackQueryHandler(set_city, pattern="^set_city_"))
-        application.add_handler(CallbackQueryHandler(handle_offset_callback, pattern="^offset_"))  # Новый обработчик
-        application.add_handler(CallbackQueryHandler(handle_main_callback,
-                                                     pattern="^(daily_schedule|daily_quote|settings|show_commands|change_city|set_offset|show_settings|back_to_main)$"))
+        application.add_handler(
+            CallbackQueryHandler(handle_settings_callback, pattern="^(change_city|show_settings|back_to_settings)$"))
 
         job_queue = application.job_queue
         if job_queue:
             job_queue.run_repeating(check_prayer_times, interval=60)
             job_queue.run_repeating(send_daily_prayer_schedule, interval=60)
-            job_queue.run_repeating(send_daily_quote, interval=60)
+            job_queue.run_repeating(send_daily_quote, interval=60)  # Проверка каждые 60 секунд для 8:00
             job_queue.run_daily(update_data, time=datetime.time(1, 0, 0, tzinfo=pytz.timezone('Europe/Moscow')))
 
         application.run_polling()
