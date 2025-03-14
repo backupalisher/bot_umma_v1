@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 TOKEN = os.getenv("BOT_TOKEN")
-DATABASE = os.getenv("DATABASE", "bot_subscribers.db")
+DATABASE = os.getenv("DATABASE")
 
 CACHE_TIMEOUT = 3600  # 1 час кэширования
 CITIES = {
@@ -256,7 +256,7 @@ async def send_daily_prayer_schedule(context: CallbackContext):
             time_diff = fajr_minutes - current_minutes
 
             schedule_id = f"{today.strftime('%Y-%m-%d')}-{user['chat_id']}"
-            if time_diff == 10 and schedule_id not in sent_daily_schedules:
+            if 5 <= time_diff <= 15 and schedule_id not in sent_daily_schedules:
                 schedule_text = "🕋 Расписание намазов на сегодня:\n" + "\n".join(
                     [f"• {name}: <b>{time}</b>" for name, time in schedule.items()]
                 )
@@ -551,7 +551,7 @@ def main():
     try:
         application = (
             Application.builder()
-            .token("8090552462:AAE3m8cIvTZwkkBjHL5PCAA4Iv1rztl5PsU")
+            .token(TOKEN)
             .post_init(post_init)
             .build()
         )

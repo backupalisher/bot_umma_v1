@@ -33,3 +33,5 @@ tzdata==2025.1
 tzlocal==5.3
 urllib3==2.3.0
 yarl==1.18.3
+dotenv~=0.9.9
+python-dotenv~=1.0.1
